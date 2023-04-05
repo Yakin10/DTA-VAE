@@ -2,6 +2,7 @@
 DTA+VAE: Drug-Target Binding Affinity Prediction Through SELFIES String Representation Learning
 
 # Usage
+```
 python run_experiments.py --num_windows 32 \
                           --seq_window_lengths 8 12 \
                           --smi_window_lengths 4 8 \
@@ -12,3 +13,6 @@ python run_experiments.py --num_windows 32 \
                           --dataset_path 'data/kiba/' \
                           --problem_type 1 \
                           --log_dir 'logs/'
+
+
+```
