@@ -1,8 +1,10 @@
 # DTA-VAE
-DTA+VAE: Drug-Target Binding Affinity Prediction Through SELFIES String Representation Learning
+DTA+VAE:Drug Target Affinity prediction with SELFIES String via variational autoencoder and Transformer6 protein model
 
 # Usage
 ```
+pip install git+https://github.com/facebookresearch/esm.git
+
 python run_experiments.py --num_windows 32 \
                           --seq_window_lengths 8 12 \
                           --smi_window_lengths 4 8 \
