@@ -131,9 +131,7 @@ def train(train_loader, model, FLAGS, NUM_FILTERS, FILTER_LENGTH1, FILTER_LENGTH
             optimizer.zero_grad()
 
             affinity = Variable(affinity)
-            pre_affinity, new_drug, drug, mu_drug, logvar_drug = model(
-                    drug_SMILES, target_protein, FLAGS, NUM_FILTERS,
-                    FILTER_LENGTH1, FILTER_LENGTH2)
+            pre_affinity, new_drug, drug, mu_drug, logvar_drug = model(drug_SMILES, target_protein, NUM_FILTERS, FILTER_LENGTH1)
             
             loss_affinity = loss_func(pre_affinity, affinity)
             
@@ -158,8 +156,7 @@ def test(model,test_loader,FLAGS, NUM_FILTERS, FILTER_LENGTH1, FILTER_LENGTH2, l
     loss_t=0
     with torch.no_grad():
         for i,(drug_SMILES, target_protein, affinity) in enumerate(test_loader):
-            pre_affinity, new_drug, drug, mu_drug, logvar_drug = model(drug_SMILES, target_protein, FLAGS, NUM_FILTERS,
-                                                        FILTER_LENGTH1, FILTER_LENGTH2)
+            pre_affinity, new_drug, drug, mu_drug, logvar_drug = model(drug_SMILES, target_protein, NUM_FILTERS, FILTER_LENGTH1)
             pre_affinities += pre_affinity.cpu().detach().numpy().tolist()
             affinities += affinity.cpu().detach().numpy().tolist()
             loss_d+=loss_f(new_drug, drug, mu_drug, logvar_drug)
@@ -169,8 +166,8 @@ def test(model,test_loader,FLAGS, NUM_FILTERS, FILTER_LENGTH1, FILTER_LENGTH2, l
         loss = loss_func(torch.Tensor(pre_affinities), torch.Tensor(affinities))
         cindex = get_cindex(affinities,pre_affinities)
         rm2 = get_rm2(affinities, pre_affinities)
-       #auc = roc_auc_score(affinities, pre_affinities)
-    return cindex,loss,rm2
+        auc = roc_auc_score(np.int32(affinities > 12.1), pre_affinities)
+    return cindex,loss,rm2, auc
 
 def nfold_setting_sample(XD, XT, Y, label_row_inds, label_col_inds, measure, FLAGS, dataset, nfolds,i):
     test_set = nfolds[5]
@@ -195,13 +192,14 @@ def nfold_setting_sample(XD, XT, Y, label_row_inds, label_col_inds, measure, FLA
         print("val set", str(len(val_sets)))
         print("train set", str(len(train_sets)))
     print('starting training')
-    bestparamind, best_param_list, bestperf, all_predictions, all_losses = general_nfold_cv(XD, XT, Y, label_row_inds,
+    '''bestparamind, best_param_list, bestperf, all_predictions, all_losses = general_nfold_cv(XD, XT, Y, label_row_inds,
                                                                                             label_col_inds, measure,
                                                                                             FLAGS, train_sets,
                                                                                             test_sets, get_aupr,
-                                                                                            get_rm2)
+                                                                                            get_rm2)'''
+    best_param_list = [32,5,4,-5]
     print('starting testing')
-    best_param, bestperf, all_predictions, all_losses, all_aupr = general_nfold_cv_test(XD, XT, Y, label_row_inds, label_col_inds,
+    best_param, bestperf, all_predictions, all_losses, all_auc, all_aupr = general_nfold_cv_test(XD, XT, Y, label_row_inds, label_col_inds,
                                                                               measure, FLAGS, train_sets, test_sets,
                                                                               get_rm2, best_param_list,i)
 
@@ -221,7 +219,7 @@ def nfold_setting_sample(XD, XT, Y, label_row_inds, label_col_inds, measure, FLA
         foldloss = all_losses[test_foldind]
         testperfs.append(foldperf)
         testloss.append(foldloss)
-        #testauc.append(all_auc[test_foldind])
+        testauc.append(all_auc[test_foldind])
         testaupr.append(all_aupr[test_foldind])
         avgperf += foldperf
 
@@ -229,8 +227,8 @@ def nfold_setting_sample(XD, XT, Y, label_row_inds, label_col_inds, measure, FLA
     avgloss = np.mean(testloss)
     perf_std = np.std(testperfs)
     loss_std = np.std(testloss)
-    #avg_auc = np.mean(testauc)
-    #auc_std = np.std(testauc)
+    avg_auc = np.mean(testauc)
+    auc_std = np.std(testauc)
     avg_aupr = np.mean(testaupr)
     aupr_std = np.std(testaupr)
 
@@ -245,7 +243,7 @@ def nfold_setting_sample(XD, XT, Y, label_row_inds, label_col_inds, measure, FLA
 
     print(best_param_list)
     print('averaged performance', avgperf)
-    return avgperf, avgloss, perf_std, loss_std, avg_aupr, aupr_std
+    return avgperf, avgloss, perf_std, loss_std, avg_auc, auc_std, avg_aupr, aupr_std
 
 
 def general_nfold_cv(XD, XT, Y, label_row_inds, label_col_inds, prfmeasure, FLAGS, labeled_sets, val_sets, get_aupr,
@@ -269,10 +267,7 @@ def general_nfold_cv(XD, XT, Y, label_row_inds, label_col_inds, prfmeasure, FLAG
     all_predictions = [[0 for x in range(w)] for y in range(h)]
     all_losses = [[0 for x in range(w)] for y in range(h)]
 
-    print(len(val_sets))
-    len_val = range(len(val_sets))
-    ep = [0]
-    for foldind in ep:
+    for foldind in range(len(val_sets)):
         valinds = val_sets[foldind]
         labeledinds = labeled_sets[foldind]
 
@@ -299,10 +294,10 @@ def general_nfold_cv(XD, XT, Y, label_row_inds, label_col_inds, prfmeasure, FLAG
                         rperf_list=[]
                         for epochind in range(FLAGS.num_epoch):
                             model = train(train_loader, model, FLAGS, param1value, param2value, param3value, lamda)
-                            rperf, loss, rm2 = test(model,test_loader, FLAGS, param1value, param2value, param3value,lamda)
+                            rperf, loss, rm2, auc = test(model,test_loader, FLAGS, param1value, param2value, param3value,lamda)
                             rperf_list.append(rperf)
                             ##Set the conditions for early stopping
-                            if (epochind)%5==0:
+                            if (epochind+1)%5==0:
                                 print('val: epoch:{},p1:{},p2:{},p3:{},loss:{:.5f},rperf:{:.5f}, rm2:{:.5f}'.format(epochind,param1value, param2value,
                                                                param3value,loss, rperf, rm2))
 
@@ -320,7 +315,6 @@ def general_nfold_cv(XD, XT, Y, label_row_inds, label_col_inds, prfmeasure, FLAG
 
                         all_predictions[pointer][foldind] = rperf  # TODO FOR EACH VAL SET allpredictions[pointer][foldind]
                         all_losses[pointer][foldind] = loss
-                        torch.save(model.state_dict,'Co-vae-selfies'+str(foldind+1))
                         
 
                     pointer += 1
@@ -347,7 +341,7 @@ def general_nfold_cv(XD, XT, Y, label_row_inds, label_col_inds, prfmeasure, FLAG
                         best_param_list = [param1value, param2value, param3value,lamda,]
 
                     pointer += 1
-    #summary(model, [(1, 80), (1, 1000)])
+    
     return bestpointer, best_param_list, bestperf, all_predictions, all_losses
 
 
@@ -369,9 +363,7 @@ def general_nfold_cv_test(XD, XT, Y, label_row_inds, label_col_inds, prfmeasure,
     all_aupr = [0 for x in range(w)] 
     all_preaffinities=[]
     all_affinities=[]
-    len_val = range(len(val_sets))
-    ep = [0]
-    for foldind in ep:
+    for foldind in range(len(val_sets)):
         valinds = val_sets[foldind]
         labeledinds = labeled_sets[foldind]
 
@@ -393,7 +385,7 @@ def general_nfold_cv_test(XD, XT, Y, label_row_inds, label_col_inds, prfmeasure,
         for epochind in range(FLAGS.num_epoch):
             model = train(train_loader, model, FLAGS, param1value, param2value, param3value, lamda)
             if (epochind + 1) % 2 == 0:
-                rperf, loss, rm2 = test(model, test_loader, FLAGS, param1value, param2value, param3value, lamda)
+                rperf, loss, rm2, auc = test(model, test_loader, FLAGS, param1value, param2value, param3value, lamda)
                 rperf_list.append(rperf)
                 print(
                     'test: epoch:{},p1:{},p2:{},p3:{},loss:{:.5f},rperf:{:.5f}, rm2:{:.5f}'.format(epochind, param1value,
@@ -411,8 +403,7 @@ def general_nfold_cv_test(XD, XT, Y, label_row_inds, label_col_inds, prfmeasure,
         model=torch.load('checkpoint.pth')
         model.eval()
         for drug_SMILES, target_protein, affinity in test_loader:
-            pre_affinity, _, _, _, _ = model(drug_SMILES, target_protein, FLAGS, param1value,
-                                                                   param2value, param3value)
+            pre_affinity, _, _, _, _ = model(drug_SMILES, target_protein, param1value, param2value)
             pre_affinities += pre_affinity.cpu().detach().numpy().tolist()
             affinities += affinity.cpu().detach().numpy().tolist()
 
@@ -425,9 +416,9 @@ def general_nfold_cv_test(XD, XT, Y, label_row_inds, label_col_inds, prfmeasure,
             aupr = get_aupr(np.int32(label > 7.0), pre_label)
         if 'kiba' in FLAGS.dataset_path:
             pre_label = pre_affinities
-            label = affinities
-            #auc = roc_auc_score(label, pre_label)
-            aupr = get_aupr(np.int32(label >12.1), pre_label)
+            label = np.int32(affinities > 12.1)
+            auc = roc_auc_score(label, pre_label)
+            aupr = get_aupr(label, pre_label)
         rperf = prfmeasure(affinities, pre_affinities)
         rm2 = get_rm2(affinities, pre_affinities)
         loss = loss_func(torch.Tensor(pre_affinities), torch.Tensor(affinities))
@@ -435,12 +426,12 @@ def general_nfold_cv_test(XD, XT, Y, label_row_inds, label_col_inds, prfmeasure,
                                                                                               param3value, loss, rperf,
                                                                                               rm2))
 
-        logging("best: P1 = %d,  P2 = %d, P3 = %d, Fold = %d, CI-i = %f, MSE = %f, aupr = %f" % (
-                    param1value, param2value, param3value, foldind, rperf, loss, aupr), FLAGS)
+        logging("best: P1 = %d,  P2 = %d, P3 = %d, Fold = %d, CI-i = %f, MSE = %f, auc = %f, aupr = %f, rm2 = %f" % (
+                    param1value, param2value, param3value, foldind, rperf, loss, auc, aupr, rm2), FLAGS)
 
         all_predictions[foldind] = rperf  # TODO FOR EACH VAL SET allpredictions[pointer][foldind]
         all_losses[foldind] = loss
-        #all_auc[foldind] = auc
+        all_auc[foldind] = auc
         all_aupr[foldind] = aupr
         all_affinities.append(affinities)
         all_preaffinities.append(pre_affinities)
@@ -452,7 +443,7 @@ def general_nfold_cv_test(XD, XT, Y, label_row_inds, label_col_inds, prfmeasure,
     best_param_list = [param1value, param2value, param3value,lamda]
     best_perf = np.mean(all_predictions)
 
-    return best_param_list, best_perf, all_predictions, all_losses, all_aupr
+    return best_param_list, best_perf, all_predictions, all_losses, all_auc, all_aupr
 
 
 # def plotLoss(history1, history2, history3, history4, batchind, epochind, param3ind, foldind, FLAGS):
@@ -510,7 +501,7 @@ def experiment(FLAGS, foldcount=6):  # 5-fold cross validation + test
     dataset = DataSet(fpath=FLAGS.dataset_path,  ### BUNU ARGS DA GUNCELLE
                       setting_no=FLAGS.problem_type,  ##BUNU ARGS A EKLE
                       seqlen=FLAGS.max_seq_len,
-                      druglen=FLAGS.max_smi_len,
+                      smilen=FLAGS.max_smi_len,
                       need_shuffle=False)
     # set character set size
     FLAGS.charseqset_size = dataset.charseqset_size
@@ -537,7 +528,7 @@ def experiment(FLAGS, foldcount=6):  # 5-fold cross validation + test
         os.makedirs(figdir)
     perf = []
     mseloss = []
-    #auc = []
+    auc = []
     aupr = []
     for i in range(1):
         random.seed(i+1000)
@@ -548,25 +539,25 @@ def experiment(FLAGS, foldcount=6):  # 5-fold cross validation + test
         if FLAGS.problem_type == 3:
             nfolds = get_targetwise_folds(label_row_inds, label_col_inds, targetcount, foldcount)
 
-        avgperf, avgloss, teststd, lossstd, avg_aupr, aupr_std = nfold_setting_sample(XD, XT, Y, label_row_inds,label_col_inds,
+        avgperf, avgloss, teststd, lossstd, avg_auc, auc_std, avg_aupr, aupr_std = nfold_setting_sample(XD, XT, Y, label_row_inds,label_col_inds,
                                                                             get_cindex, FLAGS, dataset, nfolds,i)
         logging("Setting " + str(FLAGS.problem_type), FLAGS)
 
-        logging("avg_perf = %.5f,  avg_mse = %.5f, std = %.5f, loss_std = %.5f, aupr =%.5f, aupr_std = %.5f" %
-                    (avgperf,avgloss,teststd,lossstd, avg_aupr, aupr_std), FLAGS)
+        logging("avg_perf = %.5f,  avg_mse = %.5f, std = %.5f, loss_std = %.5f, auc=%.5f, auc_std=%.5f aupr =%.5f, aupr_std = %.5f" %
+                    (avgperf,avgloss,teststd,lossstd,avg_auc, auc_std, avg_aupr, aupr_std), FLAGS)
 
         perf.append(avgperf)
         mseloss.append(avgloss)
-        #auc.append(avg_auc)
+        auc.append(avg_auc)
         aupr.append(avg_aupr)
     print(FLAGS.log_dir)
     
 
     logging(("Finally"), FLAGS)
 
-    logging("avg_perf = %.5f,  avg_mse = %.5f, std = %.5f, loss_std = %.5f, aupr =%.5f, aupr_std = %.5f" %
-            (np.mean(perf), np.mean(mseloss), np.std(perf), np.std(mseloss), np.mean(aupr), np.std(aupr)), FLAGS)
-    report = "avg_perf = %.5f,  avg_mse = %.5f, std = %.5f, loss_std = %.5f, aupr =%.5f, aupr_std = %.5f" % (np.mean(perf), np.mean(mseloss), np.std(perf), np.std(mseloss), np.mean(aupr), np.std(aupr)), FLAGS
+    logging("avg_perf = %.5f,  avg_mse = %.5f, std = %.5f, loss_std = %.5f, auc = %.5f, auc_std=%.5f, aupr =%.5f, aupr_std = %.5f" %
+            (np.mean(perf), np.mean(mseloss), np.std(perf), np.std(mseloss), np.mean(auc), np.std(auc), np.mean(aupr), np.std(aupr)), FLAGS)
+    report = "avg_perf = %.5f,  avg_mse = %.5f, std = %.5f, loss_std = %.5f, auc = %.5f, auc_std=%.5f, aupr =%.5f, aupr_std = %.5f" % (np.mean(perf), np.mean(mseloss), np.std(perf), np.std(mseloss), np.mean(auc), np.std(auc), np.mean(aupr), np.std(aupr)), FLAGS
     print(report)
 
 
