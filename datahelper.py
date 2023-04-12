@@ -2,13 +2,11 @@ import sys, re, math, time
 import numpy as np
 import matplotlib.pyplot as plt
 import json
-import pickle
-import collections
 from collections import OrderedDict
 import pandas as pd
 from matplotlib.pyplot import cm
 import selfies as sf
-
+from prot_feat import *
 
 
 CHARPROTSET = {"A": 1, "C": 2, "B": 3, "E": 4, "D": 5, "G": 6,
@@ -45,7 +43,6 @@ CHARISOSMISET = {"#": 29, "%": 30, ")": 31, "(": 1, "+": 32, "-": 33, "/": 34, "
 
 CHARISOSMILEN = 64
 
-
 CHARSELFSET = {".": 0, "[#Branch1]": 1, "[#Branch2]": 2, "[#C]": 3, "[#N]": 4, "[/-Ring1]": 5, "[/C]": 6, "[/N]": 7, "[/S]": 8, "[2H]": 9, "[=Branch1]": 10, 
                "[=Branch2]": 11, "[=C]": 12, "[=N+1]": 13, "[=N-1]": 14, "[=NH2+1]": 15, "[=N]": 16, "[=O]": 17, "[=S]": 18, "[Br-1]": 19, "[Br]": 20, 
                "[Branch1]": 21, "[Branch2]": 22, "[C@@H1]": 23, "[C@@]": 24, "[C@H1]": 25, "[C@]": 26, "[C]": 27, "[Cl-1]": 28, "[Cl]": 29, "[F]": 30, 
@@ -69,16 +66,6 @@ def one_hot_smiles(line, MAX_SMI_LEN, smi_ch_ind):
 
     return X  
 
-#def one_hot_selfeis(selfie, MAX_SELF_len, self_ch_ind):
-
-
-def one_hot_sequence(line, MAX_SEQ_LEN, smi_ch_ind):
-    X = np.zeros((MAX_SEQ_LEN, len(smi_ch_ind)))
-    for i, ch in enumerate(line[:MAX_SEQ_LEN]):
-        X[i, (smi_ch_ind[ch]) - 1] = 1
-
-    return X  
-
 def selfies_to_label(selfie, largest_drug_len, CHARSELFSET):
     x = np.zeros(largest_drug_len)
     selfie += '[nop]'*(largest_drug_len-sf.len_selfies(selfie))
@@ -92,6 +79,14 @@ def multiple_selfies_to_label(selfie_list, largest_drug_len, CHARSELFSET):
         label = selfies_to_label(selfie, largest_drug_len, CHARSELFSET)
         label_list.append(label)
     return label_list
+
+
+def one_hot_sequence(line, MAX_SEQ_LEN, smi_ch_ind):
+    X = np.zeros((MAX_SEQ_LEN, len(smi_ch_ind)))
+    for i, ch in enumerate(line[:MAX_SEQ_LEN]):
+        X[i, (smi_ch_ind[ch]) - 1] = 1
+
+    return X  
 
 
 def label_smiles(line, MAX_SMI_LEN, smi_ch_ind):
@@ -146,21 +141,20 @@ def df_remove(dataframe, removelist, axis):
 ## ######################## ## 
 # works for large dataset
 class DataSet(object):
-    def __init__(self, fpath, setting_no, seqlen, druglen,need_shuffle=False):
+    def __init__(self, fpath, setting_no, seqlen, smilen,need_shuffle=False):
 
         self.SEQLEN = seqlen
-        self.SMILEN = druglen
+        self.SMILEN = smilen
         self.charseqset = CHARPROTSET
         self.charseqset_size = CHARPROTLEN
 
         self.charsmiset = CHARISOSMISET  ###HERE CAN BE EDITED
         self.charsmiset_size = CHARISOSMILEN
-        self.charselset = CHARSELFSET
         self.charselset_size = CHARSELFLEN
         self.PROBLEMSET = setting_no
 
 
-    def parse_data(self, FLAGS, drug_rep, with_label=True):
+    def parse_data(self, FLAGS, drug_rep='selfies', with_label=True):
         
 
         data_path = FLAGS.dataset_path
@@ -186,6 +180,7 @@ class DataSet(object):
         XD = []
         XT = []
         if with_label:
+            print("Drug Representation :",drug_rep)
             if(drug_rep=='smiles'):
                 for d in ligands:
                     XD.append(label_smiles(d, self.SMILEN, self.charsmiset))
@@ -194,10 +189,18 @@ class DataSet(object):
                 for d in ligands:
                     selfies_list.append(sf.encoder(d))
                 largest_drug_len = max(sf.len_selfies(s) for s in selfies_list)
+                '''drug_alphabets = list(sf.get_alphabet_from_selfies(selfies_list))
+                drug_alphabets.append('[nop]')
+                drug_alphabets.append('.')
+                drug_alphabets.sort()
+                drug_set = dict((c,i) for i, c in enumerate(drug_alphabets))
+                with open('drug_set.txt','w') as file:
+                    file.write(json.dumps(drug_set))'''
                 XD = multiple_selfies_to_label(selfies_list, largest_drug_len, CHARSELFSET)
 
-            for t in proteins:
-                XT.append(label_sequence(t, self.SEQLEN, self.charseqset))
+            XT = get_protein_features(protein_list=proteins)
+            '''for t in proteins:
+                XT.append(label_sequence(t, self.SEQLEN, self.charseqset))'''
         else:
             for d in ligands.keys():
                 XD.append(one_hot_smiles(ligands[d], self.SMILEN, self.charsmiset))
